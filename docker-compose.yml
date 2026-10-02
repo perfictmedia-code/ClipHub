@@ -1,0 +1,105 @@
+version: '3.9'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:14-alpine
+    container_name: cliphub-postgres
+    environment:
+      POSTGRES_USER: cliphub
+      POSTGRES_PASSWORD: cliphub_secure_password_change_in_production
+      POSTGRES_DB: cliphub_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cliphub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cliphub-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: cliphub-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cliphub-network
+
+  # Backend API Server
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cliphub-backend
+    environment:
+      DATABASE_URL: postgresql://cliphub:cliphub_secure_password_change_in_production@postgres:5432/cliphub_db
+      REDIS_URL: redis://redis:6379
+      ENVIRONMENT: development
+      SECRET_KEY: your-secret-key-change-in-production
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - uploads:/app/uploads
+    networks:
+      - cliphub-network
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Frontend Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cliphub-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://localhost:8000/api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - cliphub-network
+    command: npm start
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: cliphub-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - cliphub-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads:
+
+networks:
+  cliphub-network:
+    driver: bridge
